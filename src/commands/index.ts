@@ -1,3 +1,4 @@
+import { auditCommand } from './audit.js';
 import { bindCommand, buttonHandlers as bindButtonHandlers } from './bind.js';
 import { compactCommand } from './compact.js';
 import { endCommand } from './end.js';
@@ -14,6 +15,7 @@ import { usageCommand } from './usage.js';
 import type { ButtonHandler, SlashCommand } from './types.js';
 
 export const slashCommands: SlashCommand[] = [
+  auditCommand,
   bindCommand,
   newCommand,
   compactCommand,

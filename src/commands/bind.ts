@@ -5,6 +5,7 @@ import {
   ChannelType,
   EmbedBuilder,
   SlashCommandBuilder,
+  type TextChannel,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -17,6 +18,10 @@ import {
   previewWorkspaceBinding,
   type BindWorkspaceRequest,
 } from '../workspace-binding.js';
+import {
+  auditBindPreview,
+  type AuditFinding,
+} from '../security-audit.js';
 import type { ButtonHandler, CommandDeps, SlashCommand } from './types.js';
 
 const APPLY_PREFIX = 'bind-apply:';
@@ -72,10 +77,11 @@ function isProvider(value: string): value is Provider {
 function buildPreviewEmbed(
   pending: PendingBind,
   preview: Awaited<ReturnType<typeof previewWorkspaceBinding>>,
+  auditWarnings: AuditFinding[] = [],
 ): EmbedBuilder {
   const expiresAt = Math.floor((pending.requestedAt + PENDING_BIND_TTL_MS) / 1000);
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0x3b82f6)
     .setTitle('Bind workspace?')
     .setDescription(`This will bind this channel to ${formatCode(preview.workspace.name)}.`)
@@ -87,6 +93,16 @@ function buildPreviewEmbed(
       { name: 'Config', value: formatCode(relativeConfigPath(preview.configPath)), inline: false },
       { name: 'Expires', value: `<t:${expiresAt}:R>`, inline: true },
     );
+
+  if (auditWarnings.length > 0) {
+    embed.addFields({
+      name: 'Audit warnings',
+      value: formatAuditWarnings(auditWarnings),
+      inline: false,
+    });
+  }
+
+  return embed;
 }
 
 function buildSuccessEmbed(result: {
@@ -112,6 +128,19 @@ function buildErrorEmbed(title: string, error: unknown): EmbedBuilder {
     .setColor(0xef4444)
     .setTitle(title)
     .setDescription(errorMessage(error));
+}
+
+function formatAuditWarnings(warnings: AuditFinding[]): string {
+  const lines = warnings.slice(0, 5).map((warning) => {
+    const prefix = warning.severity === 'critical' ? '❌' : '⚠️';
+    return warning.detail === undefined
+      ? `${prefix} ${warning.title}`
+      : `${prefix} ${warning.title}\n${warning.detail}`;
+  });
+  const remaining = warnings.length - lines.length;
+  const value = remaining > 0 ? [...lines, `+${remaining} more warning(s)`].join('\n') : lines.join('\n');
+
+  return value.length > 1024 ? `${value.slice(0, 1021)}...` : value;
 }
 
 function buildActionRow(id: string): ActionRowBuilder<ButtonBuilder> {
@@ -228,10 +257,19 @@ export const bindCommand: SlashCommand = {
 
     try {
       const preview = await previewWorkspaceBinding({ cfg, ...pending.request });
+      const auditWarnings =
+        interaction.guild === null
+          ? []
+          : auditBindPreview({
+              cfg,
+              guild: interaction.guild,
+              channel: channel as TextChannel,
+              workspace: preview.workspace,
+            });
       pendingBinds.set(id, pending);
 
       await interaction.reply({
-        embeds: [buildPreviewEmbed(pending, preview)],
+        embeds: [buildPreviewEmbed(pending, preview, auditWarnings)],
         components: [buildActionRow(id)],
         ephemeral: true,
       });

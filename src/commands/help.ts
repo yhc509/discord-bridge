@@ -2,6 +2,7 @@ import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import type { SlashCommand } from './types.js';
 
 const commandDescriptions = [
+  ['audit', 'Check channel and workspace security settings'],
   ['bind', 'Bind this channel to a local workspace'],
   ['new', 'Start an AI session in this channel'],
   ['compact', 'Shrink the current session into a fresh one'],

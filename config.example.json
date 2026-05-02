@@ -57,5 +57,10 @@
       "port": 8787,
       "token": "OPTIONAL_SHARED_TOKEN"
     }
+  },
+  "security": {
+    "workspace_roots": ["/Users/YOUR_USERNAME/Dev"],
+    "warn_public_bind": true,
+    "warn_broad_cwd": true
   }
 }
