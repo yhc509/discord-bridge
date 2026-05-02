@@ -231,10 +231,16 @@ channel permissions, and `discord.user_allowlist`.
 your local Claude Code authentication and subscription quota; this project does
 not use the Anthropic SDK or API keys.
 
-Claude can optionally pause selected tool calls for Discord approval. Set
-`claude.approval.enabled` to `true` and list the tool names in
-`claude.approval.tools`; the bridge uses Claude Code's `PreToolUse` defer/resume
-flow, so approving a Discord button resumes the exact paused tool call.
+Claude can pause selected tool calls for Discord approval. The recommended
+Claude setup is `permission_mode: "default"` with `claude.approval.enabled: true`,
+as shown in `config.example.json`. The bridge uses Claude Code's
+`PreToolUse` defer/resume flow, so approving a Discord button resumes the exact
+paused tool call.
+
+Set `claude.approval.enabled: false` when you do not want bridge-managed
+approval buttons. In that mode the bridge does not inject its approval hook; use
+it with `bypassPermissions`, with your own Claude policy, or when temporarily
+disabling Discord approval handling.
 
 `provider: "codex"` runs Codex through the local `codex` CLI. Runtime execution
 policy is controlled by `codex.sandbox_mode` and `codex.approval_policy` in
