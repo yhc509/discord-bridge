@@ -64,6 +64,14 @@ const claudeApprovalSchema = z
   })
   .default({});
 
+const securitySchema = z
+  .object({
+    workspace_roots: z.array(z.string().min(1)).default([]),
+    warn_public_bind: z.boolean().default(true),
+    warn_broad_cwd: z.boolean().default(true),
+  })
+  .default({});
+
 const configSchema = z.object({
   state_file: z.string().optional(),
   workspaces: z.array(workspaceSchema).min(1),
@@ -92,6 +100,7 @@ const configSchema = z.object({
     })
     .default({}),
   voice: voiceSchema,
+  security: securitySchema,
 });
 
 export type Config = z.infer<typeof configSchema>;

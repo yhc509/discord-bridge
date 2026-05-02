@@ -98,6 +98,7 @@ launchctl bootstrap gui/$(id -u) \
 | --- | --- |
 | Attach to live bot output | `tmux -L discord-bridge attach -t discord-bridge` (Ctrl-b d to detach) |
 | List tmux sessions | `tmux -L discord-bridge ls` |
+| Audit channel/workspace safety | Run `/audit` in the Discord text channel |
 | Bind a new channel | Run `/bind provider:codex` in the target Discord text channel |
 | Unbind a channel | Run `/unbind` in the bound Discord channel; files stay on disk |
 | Rebuild + restart bot | `npm run build && tmux -L discord-bridge kill-session -t discord-bridge` (supervisor restarts it within ≤60s, or run `bash scripts/launchd-supervisor.sh` for immediate restart) |
@@ -123,7 +124,8 @@ provider), `discord.{bot_token, guild_id, user_allowlist}`,
 (default `discord-bridge`), `claude.{model, effort, timeout}` (defaults
 `claude-opus-4-6[1m]` / `high` / `600000`), `claude.approval.{enabled, tools}`,
 `codex.{binary, model, timeout, sandbox_mode, approval_policy}` (defaults
-`codex` / `gpt-5.5` / `600000` / the values defined in `src/config.ts`).
+`codex` / `gpt-5.5` / `600000` / the values defined in `src/config.ts`),
+`security.{workspace_roots, warn_public_bind, warn_broad_cwd}`.
 
 Optional voice input is configured under `voice`. `provider: "local"` runs
 `ffmpeg` and `whisper-cli` on the bridge host. `provider: "http"` sends audio to
@@ -131,11 +133,15 @@ a compatible `/transcribe` endpoint, intended for a MacBook bridge that offloads
 transcription to a Mac mini. `voice.server.enabled` exposes that endpoint from a
 local bridge process; non-loopback hosts require `voice.server.token`.
 
+`/audit` is a read-only safety check for a channel before or after binding. It
+checks channel visibility, broad bot permissions, workspace path scope,
+`config.json` file mode, voice exposure, and provider permission settings.
+
 `/bind` is the preferred way to add workspace mappings from Discord. It uses the
 current channel ID internally, previews the derived workspace, writes a
 `config.json.bak.*` backup, appends the workspace, creates the `cwd` if needed,
-and reloads config after Apply. It defaults to `provider: "codex"` and `~/Dev`
-as the parent directory.
+and reloads config after Apply. It also shows audit warnings in the preview. It
+defaults to `provider: "codex"` and `~/Dev` as the parent directory.
 
 `/unbind` removes the current channel's workspace mapping, writes a backup, and
 reloads config. It does not delete the workspace directory, and it refuses to

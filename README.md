@@ -378,6 +378,7 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 ## Slash commands
 
 - `/bind` — bind the current text channel to a local workspace
+- `/audit` — check channel visibility, bot permissions, workspace path, and config safety
 - `/new` — start a session in the current channel
 - `/compact` — summarize the current session into a fresh one
 - `/end` — end the current session
@@ -393,6 +394,27 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 - `/unbind` — remove the current channel workspace binding
 - `/help`
 
+## Security audit
+
+Run `/audit` from a Discord text channel to check the current channel before or
+after binding it to a workspace. The audit is read-only: it reports warnings
+instead of changing Discord roles, channel permissions, or local files.
+
+The audit checks whether `@everyone` or broad roles can view the channel,
+whether the bot has only the permissions it needs, whether the bound workspace
+path exists and looks appropriately scoped, and whether sensitive local config
+is private to the owner.
+
+Optional `security.workspace_roots` entries make workspace path checks stricter:
+
+```json
+"security": {
+  "workspace_roots": ["/Users/YOUR_USERNAME/Dev"],
+  "warn_public_bind": true,
+  "warn_broad_cwd": true
+}
+```
+
 ## Binding and unbinding channels
 
 The recommended flow is the Discord slash command:
@@ -406,6 +428,10 @@ workspace name from the current channel, previews the target `cwd`, and waits
 for an ephemeral Apply/Cancel confirmation. Applying the bind creates the local
 workspace directory if needed, backs up `config.json`, writes the new workspace
 entry, and reloads config without requiring a bot restart.
+
+The bind preview also reuses the audit checks and shows warnings if the channel
+is visible to `@everyone`, role-visible beyond the allowlist, or points at a
+broad workspace path.
 
 Useful `/bind` options:
 
