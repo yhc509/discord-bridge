@@ -43,6 +43,27 @@ interface RawConfig {
   [key: string]: unknown;
 }
 
+let configWriteQueue: Promise<void> = Promise.resolve();
+
+async function withConfigWriteLock<T>(run: () => Promise<T>): Promise<T> {
+  const previous = configWriteQueue.catch(() => undefined);
+  let release!: () => void;
+  configWriteQueue = previous.then(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+
+  await previous;
+
+  try {
+    return await run();
+  } finally {
+    release();
+  }
+}
+
 export function expandHome(input: string): string {
   if (input === '~') {
     return os.homedir();
@@ -191,20 +212,38 @@ export async function writeConfigWithBackup(
 export async function applyWorkspaceBinding(
   preview: BindWorkspacePreview,
 ): Promise<{ backupPath: string; workspace: Workspace; configPath: string }> {
-  const rawConfig = await readRawConfig(preview.configPath);
-  const nextConfig: RawConfig = {
-    ...rawConfig,
-    workspaces: [...rawConfig.workspaces, preview.workspace],
-  };
+  return withConfigWriteLock(async () => {
+    const rawConfig = await readRawConfig(preview.configPath);
+    if (
+      rawConfig.workspaces.some((workspace) =>
+        hasWorkspaceName(workspace, preview.workspace.name),
+      )
+    ) {
+      throw new Error(`workspace name already exists: ${preview.workspace.name}`);
+    }
 
-  await mkdir(preview.workspace.cwd, { recursive: true });
-  const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
+    if (
+      rawConfig.workspaces.some((workspace) =>
+        hasChannelId(workspace, preview.workspace.channel_id),
+      )
+    ) {
+      throw new Error('this channel is already bound');
+    }
 
-  return {
-    backupPath,
-    workspace: preview.workspace,
-    configPath: preview.configPath,
-  };
+    const nextConfig: RawConfig = {
+      ...rawConfig,
+      workspaces: [...rawConfig.workspaces, preview.workspace],
+    };
+
+    await mkdir(preview.workspace.cwd, { recursive: true });
+    const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
+
+    return {
+      backupPath,
+      workspace: preview.workspace,
+      configPath: preview.configPath,
+    };
+  });
 }
 
 export function previewWorkspaceUnbinding(
@@ -236,27 +275,42 @@ function hasChannelId(value: unknown, channelId: string): boolean {
   );
 }
 
+function hasWorkspaceName(value: unknown, name: string): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).name === name
+  );
+}
+
 export async function applyWorkspaceUnbinding(
   preview: UnbindWorkspacePreview,
 ): Promise<{ backupPath: string; workspace: Workspace; configPath: string }> {
-  const rawConfig = await readRawConfig(preview.configPath);
-  const nextWorkspaces = rawConfig.workspaces.filter(
-    (workspace) => !hasChannelId(workspace, preview.workspace.channel_id),
-  );
+  return withConfigWriteLock(async () => {
+    const rawConfig = await readRawConfig(preview.configPath);
+    const nextWorkspaces = rawConfig.workspaces.filter(
+      (workspace) => !hasChannelId(workspace, preview.workspace.channel_id),
+    );
 
-  if (nextWorkspaces.length === rawConfig.workspaces.length) {
-    throw new Error('this channel is not bound to any workspace');
-  }
+    if (nextWorkspaces.length === rawConfig.workspaces.length) {
+      throw new Error('this channel is not bound to any workspace');
+    }
 
-  const nextConfig: RawConfig = {
-    ...rawConfig,
-    workspaces: nextWorkspaces,
-  };
-  const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
+    if (nextWorkspaces.length === 0) {
+      throw new Error('cannot unbind the last workspace');
+    }
 
-  return {
-    backupPath,
-    workspace: preview.workspace,
-    configPath: preview.configPath,
-  };
+    const nextConfig: RawConfig = {
+      ...rawConfig,
+      workspaces: nextWorkspaces,
+    };
+    const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
+
+    return {
+      backupPath,
+      workspace: preview.workspace,
+      configPath: preview.configPath,
+    };
+  });
 }
