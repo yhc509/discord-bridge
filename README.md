@@ -504,3 +504,7 @@ exist on the machine running the bridge.
 If launchd starts the bridge but provider CLIs are not found, use absolute paths
 for `claude.binary`, `codex.binary`, `voice.local.binary`, and
 `voice.local.ffmpeg_binary`, or adjust the LaunchAgent environment.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
