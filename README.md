@@ -35,6 +35,15 @@ Compared with bridges that create one thread per session, mirror an interactive
 tmux terminal, or target many chat platforms, `discord-bridge` focuses on a
 narrower workflow: stable Discord channels bound to stable local workspaces.
 
+## Example
+
+![discord-bridge running in a Discord project channel](docs/images/discord-bridge-example.png)
+
+A mapped Discord channel works as a persistent project room. The bridge streams
+local agent output back into Discord, keeps the workspace context attached to
+the channel, and can turn voice messages or file attachments into normal agent
+prompts.
+
 ## Quick Start
 
 ```sh
