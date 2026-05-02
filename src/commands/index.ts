@@ -9,6 +9,7 @@ import { newCommand } from './new.js';
 import { queueCommand } from './queue.js';
 import { reloadCommand } from './reload.js';
 import { statusCommand } from './status.js';
+import { unbindCommand, buttonHandlers as unbindButtonHandlers } from './unbind.js';
 import { usageCommand } from './usage.js';
 import type { ButtonHandler, SlashCommand } from './types.js';
 
@@ -24,12 +25,14 @@ export const slashCommands: SlashCommand[] = [
   statusCommand,
   listCommand,
   reloadCommand,
+  unbindCommand,
   helpCommand,
 ];
 
 export const buttonHandlers: ButtonHandler[] = [
   ...bindButtonHandlers,
   ...killButtonHandlers,
+  ...unbindButtonHandlers,
 ];
 
 export function findCommandByName(name: string): SlashCommand | undefined {

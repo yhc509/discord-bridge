@@ -11,6 +11,7 @@ const commandDescriptions = [
   ['status', 'Show current channel workspace status'],
   ['list', 'Show all workspace statuses'],
   ['reload', 'Reload config.json workspaces'],
+  ['unbind', 'Remove this channel workspace binding'],
   ['help', 'Show available commands'],
 ] as const;
 

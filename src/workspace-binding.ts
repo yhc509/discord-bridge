@@ -27,6 +27,17 @@ export interface BindWorkspacePreview {
   channelName: string;
 }
 
+export interface UnbindWorkspaceRequest {
+  cfg: Config;
+  channelId: string;
+  configPath?: string;
+}
+
+export interface UnbindWorkspacePreview {
+  workspace: Workspace;
+  configPath: string;
+}
+
 interface RawConfig {
   workspaces: unknown[];
   [key: string]: unknown;
@@ -187,6 +198,60 @@ export async function applyWorkspaceBinding(
   };
 
   await mkdir(preview.workspace.cwd, { recursive: true });
+  const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
+
+  return {
+    backupPath,
+    workspace: preview.workspace,
+    configPath: preview.configPath,
+  };
+}
+
+export function previewWorkspaceUnbinding(
+  request: UnbindWorkspaceRequest,
+): UnbindWorkspacePreview {
+  const workspace = request.cfg.workspaces.find(
+    (candidate) => candidate.channel_id === request.channelId,
+  );
+  if (workspace === undefined) {
+    throw new Error('this channel is not bound to any workspace');
+  }
+
+  if (request.cfg.workspaces.length <= 1) {
+    throw new Error('cannot unbind the last workspace');
+  }
+
+  return {
+    workspace,
+    configPath: path.resolve(request.configPath ?? DEFAULT_BIND_CONFIG_PATH),
+  };
+}
+
+function hasChannelId(value: unknown, channelId: string): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).channel_id === channelId
+  );
+}
+
+export async function applyWorkspaceUnbinding(
+  preview: UnbindWorkspacePreview,
+): Promise<{ backupPath: string; workspace: Workspace; configPath: string }> {
+  const rawConfig = await readRawConfig(preview.configPath);
+  const nextWorkspaces = rawConfig.workspaces.filter(
+    (workspace) => !hasChannelId(workspace, preview.workspace.channel_id),
+  );
+
+  if (nextWorkspaces.length === rawConfig.workspaces.length) {
+    throw new Error('this channel is not bound to any workspace');
+  }
+
+  const nextConfig: RawConfig = {
+    ...rawConfig,
+    workspaces: nextWorkspaces,
+  };
   const backupPath = await writeConfigWithBackup(preview.configPath, nextConfig);
 
   return {
