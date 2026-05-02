@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.discord-bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOUR_USERNAME/Dev/discord-bridge/scripts/launchd-supervisor.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOUR_USERNAME/Dev/discord-bridge</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOUR_USERNAME/Library/Logs/discord-bridge/launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/YOUR_USERNAME/Library/Logs/discord-bridge/launchd.err.log</string>
+</dict>
+</plist>

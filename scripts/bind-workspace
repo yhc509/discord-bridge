@@ -1,0 +1,260 @@
+#!/usr/bin/env node
+
+import { copyFile, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { ChannelType, REST, Routes } from 'discord.js';
+
+const DEFAULT_CONFIG_PATH = 'config.json';
+const DEFAULT_DEV_ROOT = '~/Dev';
+const DEFAULT_PROVIDER = 'codex';
+const VALID_PROVIDERS = new Set(['claude', 'codex']);
+
+function usage() {
+  console.log(`Usage:
+  scripts/bind-workspace --channel-id <discord-channel-id> [--apply]
+
+Options:
+  --channel-id <id>   Discord channel ID to bind. Required.
+  --provider <name>   claude or codex. Defaults to codex.
+  --config <path>     Config file path. Defaults to config.json.
+  --dev-root <path>   Workspace root. Defaults to ~/Dev.
+  --apply             Write config.json and create ~/Dev/<channel-name>.
+
+Without --apply, this is a dry run.`);
+}
+
+function fail(message) {
+  console.error(`bind-workspace: ${message}`);
+  process.exit(1);
+}
+
+function parseArgs(argv) {
+  const args = {
+    configPath: DEFAULT_CONFIG_PATH,
+    devRoot: DEFAULT_DEV_ROOT,
+    provider: DEFAULT_PROVIDER,
+    apply: false,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case '--help':
+      case '-h':
+        usage();
+        process.exit(0);
+        break;
+      case '--apply':
+        args.apply = true;
+        break;
+      case '--channel-id':
+        args.channelId = argv[++i];
+        break;
+      case '--provider':
+        args.provider = argv[++i];
+        break;
+      case '--config':
+        args.configPath = argv[++i];
+        break;
+      case '--dev-root':
+        args.devRoot = argv[++i];
+        break;
+      default:
+        fail(`unknown argument: ${arg}`);
+    }
+  }
+
+  if (!args.channelId) {
+    fail('--channel-id is required');
+  }
+
+  if (!/^\d{17,20}$/.test(args.channelId)) {
+    fail(`invalid Discord channel ID: ${args.channelId}`);
+  }
+
+  if (!VALID_PROVIDERS.has(args.provider)) {
+    fail(`invalid provider: ${args.provider}`);
+  }
+
+  return args;
+}
+
+function expandHome(input) {
+  if (input === '~') {
+    return os.homedir();
+  }
+
+  if (input.startsWith('~/')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+
+  return input;
+}
+
+function assertSafeChannelName(name) {
+  if (!name || typeof name !== 'string') {
+    fail('Discord channel has no usable name');
+  }
+
+  if (name === '.' || name === '..' || name.startsWith('.')) {
+    fail(`unsafe channel name for workspace path: ${name}`);
+  }
+
+  if (name.includes('/') || name.includes('\\') || name.includes('\0')) {
+    fail(`unsafe channel name for workspace path: ${name}`);
+  }
+}
+
+async function readJson(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      fail(`invalid JSON in ${filePath}: ${error.message}`);
+    }
+
+    throw error;
+  }
+}
+
+function requireString(value, field) {
+  if (typeof value !== 'string' || value.length === 0) {
+    fail(`missing or invalid config field: ${field}`);
+  }
+
+  return value;
+}
+
+async function fetchChannel(cfg, channelId) {
+  const token = requireString(cfg.discord?.bot_token, 'discord.bot_token');
+  const guildId = requireString(cfg.discord?.guild_id, 'discord.guild_id');
+  const rest = new REST({ version: '10' }).setToken(token);
+  const channel = await rest.get(Routes.channel(channelId));
+
+  if (!channel || typeof channel !== 'object') {
+    fail(`Discord channel not found: ${channelId}`);
+  }
+
+  if (channel.guild_id !== guildId) {
+    fail(`channel ${channelId} is not in configured guild`);
+  }
+
+  if (channel.type !== ChannelType.GuildText) {
+    fail(`channel ${channelId} is not a text channel`);
+  }
+
+  const name = requireString(channel.name, 'channel.name');
+  assertSafeChannelName(name);
+
+  return { id: channelId, name };
+}
+
+async function ensureDevRoot(devRoot) {
+  const resolved = path.resolve(expandHome(devRoot));
+
+  try {
+    const rootStat = await stat(resolved);
+    if (!rootStat.isDirectory()) {
+      fail(`dev root is not a directory: ${resolved}`);
+    }
+  } catch {
+    fail(`dev root does not exist: ${resolved}`);
+  }
+
+  return realpath(resolved);
+}
+
+function assertInsideRoot(root, cwd) {
+  const resolved = path.resolve(cwd);
+  const relative = path.relative(root, resolved);
+
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    fail(`workspace cwd must be inside ${root}: ${resolved}`);
+  }
+
+  return resolved;
+}
+
+function validateConfigShape(cfg) {
+  if (!Array.isArray(cfg.workspaces)) {
+    fail('config.workspaces must be an array');
+  }
+
+  if (!cfg.discord || typeof cfg.discord !== 'object') {
+    fail('config.discord must exist');
+  }
+}
+
+function validateNoDuplicates(cfg, workspace) {
+  for (const existing of cfg.workspaces) {
+    if (existing?.name === workspace.name) {
+      fail(`workspace name already exists: ${workspace.name}`);
+    }
+
+    if (existing?.channel_id === workspace.channel_id) {
+      fail(`channel is already bound: ${workspace.channel_id}`);
+    }
+  }
+}
+
+async function writeConfig(configPath, cfg) {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '');
+  const backupPath = `${configPath}.bak.${timestamp}`;
+  const tempPath = `${configPath}.tmp.${process.pid}`;
+
+  await copyFile(configPath, backupPath);
+  await writeFile(tempPath, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+  await rename(tempPath, configPath);
+
+  return backupPath;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const configPath = path.resolve(args.configPath);
+  const cfg = await readJson(configPath);
+
+  validateConfigShape(cfg);
+
+  const channel = await fetchChannel(cfg, args.channelId);
+  const devRoot = await ensureDevRoot(args.devRoot);
+  const cwd = assertInsideRoot(devRoot, path.join(devRoot, channel.name));
+  const workspace = {
+    name: channel.name,
+    channel_id: channel.id,
+    cwd,
+    provider: args.provider,
+  };
+
+  validateNoDuplicates(cfg, workspace);
+
+  const nextConfig = {
+    ...cfg,
+    workspaces: [...cfg.workspaces, workspace],
+  };
+
+  console.log(`mode: ${args.apply ? 'apply' : 'dry-run'}`);
+  console.log(`channel: #${channel.name} (${channel.id})`);
+  console.log(`workspace: ${workspace.name}`);
+  console.log(`cwd: ${workspace.cwd}`);
+  console.log(`provider: ${workspace.provider}`);
+
+  if (!args.apply) {
+    console.log('dry-run complete; rerun with --apply to write config and create cwd');
+    return;
+  }
+
+  await mkdir(cwd, { recursive: true });
+  const backupPath = await writeConfig(configPath, nextConfig);
+
+  console.log(`created/verified cwd: ${cwd}`);
+  console.log(`updated config: ${configPath}`);
+  console.log(`backup: ${backupPath}`);
+}
+
+main().catch((error) => {
+  fail(error instanceof Error ? error.message : String(error));
+});

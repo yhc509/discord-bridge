@@ -1,0 +1,4 @@
+interface:
+  display_name: "Discord Bridge Attachments"
+  short_description: "Register screenshots and files for Discord bridge upload."
+  default_prompt: "Send this screenshot or generated file through Discord bridge."

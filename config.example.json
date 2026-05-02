@@ -1,0 +1,57 @@
+{
+  "state_file": "/Users/YOUR_USERNAME/Library/Application Support/discord-bridge/state.json",
+  "workspaces": [
+    { "name": "operator",     "channel_id": "FILL_ME_WITH_OPERATOR_CHANNEL_ID", "cwd": "/Users/YOUR_USERNAME/Dev", "provider": "codex" },
+    { "name": "frontend-app", "channel_id": "REPLACE_ME", "cwd": "/Users/YOUR_USERNAME/Dev/frontend-app", "provider": "claude" },
+    { "name": "backend-api",  "channel_id": "REPLACE_ME", "cwd": "/Users/YOUR_USERNAME/Dev/backend-api", "provider": "codex" },
+    { "name": "docs-site",    "channel_id": "REPLACE_ME", "cwd": "/Users/YOUR_USERNAME/Dev/docs-site", "provider": "claude" }
+  ],
+  "discord": {
+    "bot_token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "guild_id": "REPLACE_ME",
+    "user_allowlist": ["REPLACE_ME"],
+    "notify_channel_name": "discord-bridge"
+  },
+  "claude": {
+    "binary": "claude",
+    "permission_mode": "bypassPermissions",
+    "output_format": "stream-json",
+    "model": "claude-opus-4-6[1m]",
+    "effort": "high",
+    "timeout": 1800000
+  },
+  "codex": {
+    "binary": "codex",
+    "model": "gpt-5.5",
+    "timeout": 1800000,
+    "sandbox_mode": "workspace-write",
+    "approval_policy": "on-request"
+  },
+  "voice": {
+    "enabled": false,
+    "provider": "local",
+    "language": "ko",
+    "max_audio_mb": 25,
+    "timeout": 120000,
+    "concurrency": 1,
+    "local": {
+      "binary": "/opt/homebrew/bin/whisper-cli",
+      "model": "/Users/YOUR_USERNAME/Models/whisper/ggml-small.bin",
+      "ffmpeg_binary": "/opt/homebrew/bin/ffmpeg",
+      "extra_args": [
+        "--prompt",
+        "한국어 음성 명령입니다. 테스트 메시지, 현재 상태 확인, 파일 수정, 빌드, 재시작 같은 짧은 개발 작업 요청이 들어옵니다."
+      ]
+    },
+    "http": {
+      "url": "http://MAC_MINI_HOSTNAME.local:8787/transcribe",
+      "token": "OPTIONAL_SHARED_TOKEN"
+    },
+    "server": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "port": 8787,
+      "token": "OPTIONAL_SHARED_TOKEN"
+    }
+  }
+}

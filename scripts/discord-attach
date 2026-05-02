@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+
+import { randomUUID } from 'node:crypto';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const outboxDir = process.env.DISCORD_ATTACH_OUTBOX_DIR;
+const inputs = process.argv.slice(2);
+
+if (!outboxDir) {
+  console.error('discord-attach: DISCORD_ATTACH_OUTBOX_DIR is not set');
+  process.exit(1);
+}
+
+if (inputs.length === 0) {
+  console.error('discord-attach: provide one or more file paths');
+  process.exit(1);
+}
+
+const resolvedPaths = [];
+
+for (const input of inputs) {
+  const resolved = path.resolve(process.cwd(), input);
+  try {
+    const fileStat = await stat(resolved);
+    if (!fileStat.isFile()) {
+      console.error(`discord-attach: not a file: ${resolved}`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`discord-attach: file not found: ${resolved}`);
+    process.exit(1);
+  }
+
+  resolvedPaths.push(resolved);
+}
+
+await mkdir(outboxDir, { recursive: true });
+const entryPath = path.join(outboxDir, `${Date.now()}-${process.pid}-${randomUUID()}.json`);
+await writeFile(entryPath, JSON.stringify({ paths: resolvedPaths }), 'utf8');
+
+console.log(`queued ${resolvedPaths.length} attachment(s)`);
