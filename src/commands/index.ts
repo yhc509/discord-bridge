@@ -1,3 +1,4 @@
+import { bindCommand, buttonHandlers as bindButtonHandlers } from './bind.js';
 import { compactCommand } from './compact.js';
 import { endCommand } from './end.js';
 import { helpCommand } from './help.js';
@@ -12,6 +13,7 @@ import { usageCommand } from './usage.js';
 import type { ButtonHandler, SlashCommand } from './types.js';
 
 export const slashCommands: SlashCommand[] = [
+  bindCommand,
   newCommand,
   compactCommand,
   endCommand,
@@ -25,7 +27,10 @@ export const slashCommands: SlashCommand[] = [
   helpCommand,
 ];
 
-export const buttonHandlers: ButtonHandler[] = [...killButtonHandlers];
+export const buttonHandlers: ButtonHandler[] = [
+  ...bindButtonHandlers,
+  ...killButtonHandlers,
+];
 
 export function findCommandByName(name: string): SlashCommand | undefined {
   return slashCommands.find((command) => command.data.name === name);

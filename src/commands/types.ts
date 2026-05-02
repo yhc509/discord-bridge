@@ -9,6 +9,7 @@ import type { DiscordStreamer } from '../stream.js';
 
 export interface CommandDeps {
   cfg: Config;
+  configPath: string;
   sessions: SessionManager;
   streamer: DiscordStreamer;
   reloadConfig: () => Promise<{ added: string[]; removed: string[]; changed: string[] }>;
