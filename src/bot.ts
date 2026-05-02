@@ -78,6 +78,11 @@ const PERMISSION_DENIED_PROMPT = [
 
 type ConfigReloadSummary = { added: string[]; removed: string[]; changed: string[] };
 type PermissionAction = 'allow' | 'deny';
+type PermissionActionRequest = {
+  action: PermissionAction;
+  workspace: string;
+  requestId?: string;
+};
 type VoiceRuntime = {
   transcriber: VoiceTranscriber | undefined;
   server: VoiceTranscriptionServer | undefined;
@@ -225,15 +230,19 @@ function warnIgnoredReloadChange(field: string): void {
   console.warn(`[config-reload] ${field} changed; restart the bot to apply it.`);
 }
 
-function permissionActionCustomId(action: PermissionAction, workspace: string): string {
+function permissionActionCustomId(
+  action: PermissionAction,
+  workspace: string,
+  requestId?: string,
+): string {
   const prefix =
     action === 'allow' ? PERMISSION_ALLOW_CUSTOM_ID_PREFIX : PERMISSION_DENY_CUSTOM_ID_PREFIX;
-  return `${prefix}${encodeURIComponent(workspace)}`;
+  const workspacePart = encodeURIComponent(workspace);
+  const requestPart = requestId !== undefined ? `:${encodeURIComponent(requestId)}` : '';
+  return `${prefix}${workspacePart}${requestPart}`;
 }
 
-function permissionActionFromCustomId(
-  customId: string,
-): { action: PermissionAction; workspace: string } | undefined {
+function permissionActionFromCustomId(customId: string): PermissionActionRequest | undefined {
   const action = customId.startsWith(PERMISSION_ALLOW_CUSTOM_ID_PREFIX)
     ? 'allow'
     : customId.startsWith(PERMISSION_DENY_CUSTOM_ID_PREFIX)
@@ -247,22 +256,30 @@ function permissionActionFromCustomId(
     action === 'allow' ? PERMISSION_ALLOW_CUSTOM_ID_PREFIX : PERMISSION_DENY_CUSTOM_ID_PREFIX;
 
   try {
-    return { action, workspace: decodeURIComponent(customId.slice(prefix.length)) };
+    const [workspacePart, requestIdPart] = customId.slice(prefix.length).split(':', 2);
+    return {
+      action,
+      workspace: decodeURIComponent(workspacePart),
+      ...(requestIdPart !== undefined ? { requestId: decodeURIComponent(requestIdPart) } : {}),
+    };
   } catch {
     return undefined;
   }
 }
 
-function permissionActionComponents(workspace: string): ActionRowBuilder<ButtonBuilder>[] {
+function permissionActionComponents(
+  workspace: string,
+  requestId?: string,
+): ActionRowBuilder<ButtonBuilder>[] {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(permissionActionCustomId('allow', workspace))
-        .setLabel('Allow and retry')
+        .setCustomId(permissionActionCustomId('allow', workspace, requestId))
+        .setLabel(requestId === undefined ? 'Allow and retry' : 'Allow')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
-        .setCustomId(permissionActionCustomId('deny', workspace))
-        .setLabel('Deny and continue')
+        .setCustomId(permissionActionCustomId('deny', workspace, requestId))
+        .setLabel(requestId === undefined ? 'Deny and continue' : 'Deny')
         .setStyle(ButtonStyle.Danger),
     ),
   ];
@@ -656,6 +673,7 @@ async function handleSessionEvents(
   let handle: StreamHandle | undefined;
   let resultEvent: Extract<ClaudeEvent, { type: 'result' }> | undefined;
   let errorSummary: string | undefined;
+  let permissionSummary: string | undefined;
   const imageFilesToUpload: string[] = [];
 
   const getHandle = async (): Promise<StreamHandle> => {
@@ -667,6 +685,52 @@ async function handleSessionEvents(
     for await (const event of events) {
       if (event.type === 'queued') {
         await sendQueuedNotice(channel, event.buffered, userMessage);
+        continue;
+      }
+
+      if (event.type === 'permission_block') {
+        try {
+          await channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🚫 permission blocked')
+                .setDescription(`${event.tool}: ${event.reason}`)
+                .setFooter({ text: 'Allow retries once; deny continues with a safer alternative.' })
+                .setColor(0xef4444),
+            ],
+            components: permissionActionComponents(workspace),
+          });
+        } catch (error) {
+          console.error(error);
+        }
+        continue;
+      }
+
+      if (event.type === 'permission_request') {
+        permissionSummary = `⏸️ waiting for approval · ${event.tool} ${event.target}`.trimEnd();
+        try {
+          await channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🛂 permission requested')
+                .setDescription(`\`${event.tool}\` ${event.target}`)
+                .setFooter({ text: 'Approve to resume the paused tool call; deny to continue safely.' })
+                .setColor(0xf59e0b),
+            ],
+            components: permissionActionComponents(workspace, event.id),
+          });
+        } catch (error) {
+          console.error(error);
+        }
+        continue;
+      }
+
+      if (event.type === 'result') {
+        resultEvent = event;
+        continue;
+      }
+
+      if (event.type === 'session_init') {
         continue;
       }
 
@@ -695,30 +759,6 @@ async function handleSessionEvents(
           }
           break;
         }
-
-        case 'permission_block':
-          try {
-            await channel.send({
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle('🚫 permission blocked')
-                  .setDescription(`${event.tool}: ${event.reason}`)
-                  .setFooter({ text: 'Allow retries once; deny continues with a safer alternative.' })
-                  .setColor(0xef4444),
-              ],
-              components: permissionActionComponents(workspace),
-            });
-          } catch (error) {
-            console.error(error);
-          }
-          break;
-
-        case 'result':
-          resultEvent = event;
-          break;
-
-        case 'session_init':
-          break;
 
         case 'error':
           if (event.fatal) {
@@ -763,7 +803,9 @@ async function handleSessionEvents(
     const replyLine =
       errorSummary !== undefined
         ? `❌ error · ${errorSummary}`
-        : resultEvent !== undefined
+        : permissionSummary !== undefined && resultEvent?.deferred === true
+          ? permissionSummary
+          : resultEvent !== undefined
           ? `✅ done · ${await buildResultSummary(provider, resultEvent)}`
           : undefined;
 
@@ -795,7 +837,7 @@ async function handlePermissionActionInteraction(
   if (permissionAction === undefined) {
     return false;
   }
-  const { action, workspace } = permissionAction;
+  const { action, workspace, requestId } = permissionAction;
 
   if (!interaction.channel?.isSendable()) {
     await replyEphemeral(interaction, '❌ This channel cannot receive session output.');
@@ -814,17 +856,22 @@ async function handlePermissionActionInteraction(
 
   await runWithAttachmentOutbox(async (outboxDir) => {
     const provider = sessions.status(workspace).provider;
-    const events = sessions.sendPrompt(
-      workspace,
-      PERMISSION_DECISION_TRIGGER,
-      {
-        attachmentOutboxDir: outboxDir,
-        hiddenInstructions:
-          action === 'allow' ? PERMISSION_APPROVED_PROMPT : PERMISSION_DENIED_PROMPT,
-        internalMode: true,
-      },
-      { workspace, channel },
-    );
+    const events =
+      requestId !== undefined
+        ? sessions.resolvePermission(workspace, requestId, action, {
+            attachmentOutboxDir: outboxDir,
+          })
+        : sessions.sendPrompt(
+            workspace,
+            PERMISSION_DECISION_TRIGGER,
+            {
+              attachmentOutboxDir: outboxDir,
+              hiddenInstructions:
+                action === 'allow' ? PERMISSION_APPROVED_PROMPT : PERMISSION_DENIED_PROMPT,
+              internalMode: true,
+            },
+            { workspace, channel },
+          );
 
     await handleSessionEvents(
       workspace,

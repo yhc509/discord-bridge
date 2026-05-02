@@ -18,7 +18,11 @@
     "output_format": "stream-json",
     "model": "claude-opus-4-6[1m]",
     "effort": "high",
-    "timeout": 1800000
+    "timeout": 1800000,
+    "approval": {
+      "enabled": false,
+      "tools": ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]
+    }
   },
   "codex": {
     "binary": "codex",

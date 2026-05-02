@@ -1,7 +1,12 @@
 import type { Config, Provider, Workspace } from '../config.js';
 import { DISCORD_ATTACH_OUTBOX_ENV } from '../outbound-attachments.js';
 import type { SendableChannel } from '../stream.js';
-import { invoke, type InvokeHandle } from './process.js';
+import {
+  invoke,
+  type ClaudePermissionApproval,
+  type ClaudePermissionDecision,
+  type InvokeHandle,
+} from './process.js';
 import { invokeCodex } from './codex-process.js';
 import type { ClaudeEvent } from './parser.js';
 import {
@@ -35,6 +40,7 @@ export interface WorkspaceStatus {
   cwd: string;
   provider: Provider;
   restoredFromDisk: boolean;
+  pendingPermission?: PendingPermission;
 }
 
 export interface SendPromptOptions {
@@ -44,6 +50,9 @@ export interface SendPromptOptions {
   persistedPrompt?: string;
   recoveryMode?: boolean;
   queueBatchMode?: boolean;
+  permissionDecision?: ClaudePermissionDecision;
+  permissionRequestId?: string;
+  permissionDenyReason?: string;
 }
 
 export interface QueueContext {
@@ -59,6 +68,12 @@ export interface QueuedPromptItem {
   queuedAt: Date;
   hiddenInstructions?: string;
   internalMode?: boolean;
+}
+
+export interface PendingPermission {
+  id: string;
+  tool: string;
+  target: string;
 }
 
 interface PendingPrompt {
@@ -91,6 +106,7 @@ interface InternalState {
   currentTurn?: Promise<void>;
   interruptRequested?: boolean;
   pendingPrompts: PendingPrompt[];
+  pendingPermission?: PendingPermission;
   nextTurnIsFirst: boolean;
   provider: Provider;
   restoredFromDisk: boolean;
@@ -216,6 +232,23 @@ function previewPrompt(prompt: string): string {
   return compact.length > 180 ? `${compact.slice(0, 177)}...` : compact;
 }
 
+function claudePermissionApprovalFromOptions(
+  cfg: Config,
+  opts: SendPromptOptions,
+): ClaudePermissionApproval | undefined {
+  if (!cfg.claude.approval.enabled) {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    tools: cfg.claude.approval.tools,
+    decision: opts.permissionDecision ?? 'defer',
+    requestId: opts.permissionRequestId,
+    denyReason: opts.permissionDenyReason,
+  };
+}
+
 export class SessionManager {
   private states = new Map<string, InternalState>();
   private persistQueue: Promise<void> = Promise.resolve();
@@ -265,7 +298,7 @@ export class SessionManager {
 
       const state: InternalState = {
         workspace: name,
-        state: 'idle',
+        state: entry.pendingPermission !== undefined ? 'waiting' : 'idle',
         startedAt: entry.startedAtMs !== undefined ? new Date(entry.startedAtMs) : new Date(),
         lastPromptAt:
           entry.lastPromptAtMs !== undefined ? new Date(entry.lastPromptAtMs) : undefined,
@@ -302,6 +335,7 @@ export class SessionManager {
                 },
               ]
             : [],
+        pendingPermission: entry.pendingPermission,
         nextTurnIsFirst: entry.sessionId === undefined,
         sessionId: entry.sessionId,
         provider: entry.provider ?? workspace.provider ?? 'claude',
@@ -425,9 +459,9 @@ export class SessionManager {
     }
 
     const state = this.requireState(workspace);
-    if (state.state === 'running') {
+    if (state.state === 'running' || state.state === 'waiting') {
       if (ctx === undefined) {
-        throw new Error('queue context is required while session is running');
+        throw new Error('queue context is required while session is busy');
       }
 
       const queuedItem = createQueuedPromptItem(prompt, opts);
@@ -447,6 +481,33 @@ export class SessionManager {
     }
 
     yield* this.runTurn(workspace, prompt, opts);
+  }
+
+  async *resolvePermission(
+    workspace: string,
+    requestId: string,
+    action: ClaudePermissionDecision,
+    opts: SendPromptOptions = {},
+  ): AsyncGenerator<ClaudeEvent> {
+    const state = this.requireState(workspace);
+    if (state.provider !== 'claude') {
+      throw new Error('Discord approval resume is only supported for Claude workspaces');
+    }
+
+    if (state.state === 'running' && state.currentInvoke !== undefined) {
+      throw new Error('workspace is already running');
+    }
+
+    state.pendingPermission = undefined;
+    yield* this.runTurn(workspace, '', {
+      ...opts,
+      internalMode: true,
+      permissionDecision: action,
+      permissionRequestId: requestId,
+      permissionDenyReason:
+        opts.permissionDenyReason ??
+        (action === 'deny' ? 'The Discord user denied this permission request.' : undefined),
+    });
   }
 
   setQueueRunner(runner: QueueRunner): void {
@@ -695,6 +756,7 @@ export class SessionManager {
           outputFormat: this.cfg.claude.output_format,
           model: this.cfg.claude.model,
           effort: this.cfg.claude.effort,
+          permissionApproval: claudePermissionApprovalFromOptions(this.cfg, opts),
         });
       }
 
@@ -706,8 +768,23 @@ export class SessionManager {
           await this.persist();
         }
 
+        if (event.type === 'permission_request') {
+          state.pendingPermission = {
+            id: event.id,
+            tool: event.tool,
+            target: event.target,
+          };
+          if (event.sessionId !== undefined) {
+            state.sessionId = event.sessionId;
+          }
+          state.state = 'waiting';
+          this.schedulePersist();
+        }
+
         if (event.type === 'result') {
-          state.completedTurns += 1;
+          if (event.deferred !== true) {
+            state.completedTurns += 1;
+          }
           state.totalTokens += event.tokens;
           state.lastTurnTokens = event.tokens;
           state.lastTurnDurationMs = event.durationMs;
@@ -746,8 +823,11 @@ export class SessionManager {
       }
 
       if (state.state !== 'error') {
-        state.state = 'idle';
         state.nextTurnIsFirst = false;
+        if (state.state !== 'waiting') {
+          state.state = 'idle';
+          state.pendingPermission = undefined;
+        }
       }
 
       state.interruptRequested = false;
@@ -860,6 +940,7 @@ export class SessionManager {
       cwd: state.cwd,
       provider: state.provider,
       restoredFromDisk: state.restoredFromDisk,
+      pendingPermission: state.pendingPermission,
     };
   }
 
@@ -884,7 +965,7 @@ export class SessionManager {
     const persisted: PersistedMap = {};
 
     for (const [workspace, state] of this.states) {
-      if (!state.sessionId && !state.interruptedTurnPrompt) {
+      if (!state.sessionId && !state.interruptedTurnPrompt && state.pendingPermission === undefined) {
         continue;
       }
 
@@ -907,6 +988,7 @@ export class SessionManager {
             internalMode: item.internalMode,
           })),
         ),
+        pendingPermission: state.pendingPermission,
         completedTurns: state.completedTurns,
         totalTokens: state.totalTokens,
         totalCostUsd: state.totalCostUsd,

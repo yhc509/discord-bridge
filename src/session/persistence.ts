@@ -22,6 +22,11 @@ export interface PersistedEntry {
     hiddenInstructions?: string;
     internalMode?: boolean;
   }>;
+  pendingPermission?: {
+    id: string;
+    tool: string;
+    target: string;
+  };
   completedTurns?: number;
   totalTokens?: number;
   totalCostUsd?: number;
@@ -57,6 +62,13 @@ const persistedMapSchema = z.record(
           internalMode: z.boolean().optional(),
         }),
       )
+      .optional(),
+    pendingPermission: z
+      .object({
+        id: z.string(),
+        tool: z.string(),
+        target: z.string(),
+      })
       .optional(),
     completedTurns: z.number().int().nonnegative().optional(),
     totalTokens: z.number().int().nonnegative().optional(),

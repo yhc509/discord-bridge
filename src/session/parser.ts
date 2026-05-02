@@ -5,6 +5,14 @@ export type ClaudeEvent =
   | { type: 'queued'; buffered: number }
   | { type: 'permission_block'; tool: string; reason: string }
   | {
+      type: 'permission_request';
+      id: string;
+      tool: string;
+      target: string;
+      input: JsonRecord;
+      sessionId?: string;
+    }
+  | {
       type: 'result';
       tokens: number;
       contextTokens: number;
@@ -13,6 +21,7 @@ export type ClaudeEvent =
       costUsd?: number;
       contextWindow?: number;
       modelId?: string;
+      deferred?: boolean;
     }
   | { type: 'tool_use'; tool: string; target: string; diff?: string; filePath?: string }
   | { type: 'error'; message: string; fatal: boolean }
@@ -78,6 +87,30 @@ function* permissionDenialEvents(event: JsonRecord): Generator<ClaudeEvent> {
   for (const denial of permissionDenials) {
     yield permissionDenialToEvent(denial);
   }
+}
+
+function deferredToolUseEvent(event: JsonRecord): ClaudeEvent | undefined {
+  const deferredToolUse = event.deferred_tool_use;
+  if (!isRecord(deferredToolUse)) {
+    return undefined;
+  }
+
+  const id = asString(deferredToolUse.id);
+  const tool = asString(deferredToolUse.name);
+  if (id === undefined || tool === undefined) {
+    return undefined;
+  }
+
+  const input = isRecord(deferredToolUse.input) ? deferredToolUse.input : {};
+  const sessionId = asString(event.session_id);
+  return {
+    type: 'permission_request',
+    id,
+    tool,
+    target: toolTarget(tool, input),
+    input,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  };
 }
 
 function shortenPath(p: string): string {
@@ -205,6 +238,12 @@ function* processEvent(event: unknown, state: StreamParseState): Generator<Claud
   }
 
   if (eventType === 'result') {
+    const deferred = asString(event.stop_reason) === 'tool_deferred';
+    const deferredEvent = deferredToolUseEvent(event);
+    if (deferredEvent !== undefined) {
+      yield deferredEvent;
+    }
+
     yield* permissionDenialEvents(event);
 
     const usage = event.usage;
@@ -241,6 +280,7 @@ function* processEvent(event: unknown, state: StreamParseState): Generator<Claud
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(contextWindow !== undefined && contextWindow > 0 ? { contextWindow } : {}),
       ...(modelId !== undefined ? { modelId } : {}),
+      ...(deferred ? { deferred: true } : {}),
     };
 
     if (subtype === 'error' || event.is_error === true) {

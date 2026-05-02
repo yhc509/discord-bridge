@@ -121,9 +121,9 @@ provider), `discord.{bot_token, guild_id, user_allowlist}`,
 `claude.{binary, permission_mode, output_format}`. Optional:
 `discord.notify_channel_name`
 (default `discord-bridge`), `claude.{model, effort, timeout}` (defaults
-`claude-opus-4-6[1m]` / `high` / `600000`), `codex.{binary, model, timeout,
-sandbox_mode, approval_policy}` (defaults `codex` / `gpt-5.5` / `600000` /
-the values defined in `src/config.ts`).
+`claude-opus-4-6[1m]` / `high` / `600000`), `claude.approval.{enabled, tools}`,
+`codex.{binary, model, timeout, sandbox_mode, approval_policy}` (defaults
+`codex` / `gpt-5.5` / `600000` / the values defined in `src/config.ts`).
 
 Optional voice input is configured under `voice`. `provider: "local"` runs
 `ffmpeg` and `whisper-cli` on the bridge host. `provider: "http"` sends audio to
@@ -150,8 +150,12 @@ Discord renames do not auto-update `config.json`.
 
 - `claude -p` is invoked per turn. Subsequent turns use `--continue` (or
   `--resume <sessionId>` after a restart, via `state.json`).
-- `bypassPermissions` mode is used; denials come through
-  `result.permission_denials[]` (formal) rather than text heuristics.
+- Claude approval mode is optional. When `claude.approval.enabled=true`, the
+  bridge injects a `PreToolUse` hook for `claude.approval.tools`; Claude Code
+  exits with `stop_reason: "tool_deferred"`, Discord buttons capture allow/deny,
+  and the bridge resumes the exact paused tool call with `--resume`.
+- Without deferred approval, denials still come through `result.permission_denials[]`
+  (formal) rather than text heuristics and use the older retry/continue buttons.
 - Session manager keeps a per-workspace queue (max 3 pending). Queued turns
   carry their `channel + userMessage` context so output routes back to the
   originating channel.

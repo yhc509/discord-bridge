@@ -231,6 +231,11 @@ channel permissions, and `discord.user_allowlist`.
 your local Claude Code authentication and subscription quota; this project does
 not use the Anthropic SDK or API keys.
 
+Claude can optionally pause selected tool calls for Discord approval. Set
+`claude.approval.enabled` to `true` and list the tool names in
+`claude.approval.tools`; the bridge uses Claude Code's `PreToolUse` defer/resume
+flow, so approving a Discord button resumes the exact paused tool call.
+
 `provider: "codex"` runs Codex through the local `codex` CLI. Runtime execution
 policy is controlled by `codex.sandbox_mode` and `codex.approval_policy` in
 `config.json`.
@@ -520,8 +525,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.caffeinate.p
 - `config.json` contains your Discord bot token and is gitignored.
 - Set `chmod 600 config.json`.
 - Keep `state_file` outside the repo.
-- Review `codex.sandbox_mode`, `codex.approval_policy`, and Claude permission
-  mode before using the bridge in shared Discord channels.
+- Review `codex.sandbox_mode`, `codex.approval_policy`, Claude permission mode,
+  and `claude.approval` before using the bridge in shared Discord channels.
 - The default workflow binds existing channels by ID and does not require the
   bot to create, rename, or delete channels.
 
