@@ -54,6 +54,7 @@ import {
   type VoiceTranscriber,
   type VoiceTranscriptionServer,
 } from './voice.js';
+import { DEFAULT_BIND_CONFIG_PATH } from './workspace-binding.js';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const PERMISSION_ALLOW_CUSTOM_ID_PREFIX = 'permission-allow:';
@@ -840,7 +841,8 @@ async function handlePermissionActionInteraction(
 }
 
 async function main(): Promise<void> {
-  let currentConfig = await loadConfig();
+  const configPath = DEFAULT_BIND_CONFIG_PATH;
+  let currentConfig = await loadConfig(configPath);
   const statePath =
     currentConfig.state_file ??
     path.join(os.homedir(), 'Library/Application Support/discord-bridge/state.json');
@@ -879,7 +881,7 @@ async function main(): Promise<void> {
   });
 
   const reloadConfig = async (): Promise<ConfigReloadSummary> => {
-    const nextConfig = await loadConfig();
+    const nextConfig = await loadConfig(configPath);
     const runtimeConfig = preserveRuntimeReloadFields(currentConfig, nextConfig);
     const previousVoiceRuntime = voiceRuntime;
     await closeVoiceRuntime(previousVoiceRuntime);
@@ -905,6 +907,7 @@ async function main(): Promise<void> {
     get cfg() {
       return currentConfig;
     },
+    configPath,
     sessions,
     streamer,
     reloadConfig,

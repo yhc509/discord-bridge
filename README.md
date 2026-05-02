@@ -77,7 +77,8 @@ Then edit `config.json`:
 - set `discord.bot_token`
 - set `discord.guild_id`
 - set `discord.user_allowlist`
-- map each workspace to a Discord `channel_id`, local `cwd`, and optional `provider`
+- map at least one initial workspace to a Discord `channel_id`, local `cwd`, and
+  optional `provider`
 
 Build and start:
 
@@ -88,6 +89,8 @@ npm start
 
 When the bot is online, run `/list` or `/status` in Discord. In a mapped
 workspace channel, send a normal message to start a Claude or Codex turn.
+After that first mapped channel is available, authorized users can add more
+workspace channels from Discord with `/bind`.
 
 The optional `state_file` key stores resumable Claude session IDs. Use an absolute path outside the repo, such as the Application Support path shown in `config.example.json`.
 
@@ -155,7 +158,8 @@ Recommended bot permissions:
 - Read Message History
 
 The bot does not need Administrator or Manage Channels for the default workflow.
-Create channels yourself, copy their IDs, and bind them in `config.json`.
+Create channels yourself and bind them either in `config.json` or, after the
+bridge is running, with `/bind`.
 
 ### 4. Invite the bot
 
@@ -171,11 +175,11 @@ Enable Discord Developer Mode:
 
 `User Settings` -> `Advanced` -> `Developer Mode`
 
-Then copy these IDs:
+Then copy these IDs for the initial config:
 
 - server ID -> `discord.guild_id`
 - your user ID -> `discord.user_allowlist`
-- each workspace channel ID -> `workspaces[].channel_id`
+- at least one workspace channel ID -> `workspaces[].channel_id`
 
 For example:
 
@@ -215,6 +219,8 @@ Then in Discord:
 1. Run `/list` to confirm the bot sees the configured workspaces.
 2. Run `/status` in a mapped channel.
 3. Send a normal message in that mapped channel.
+4. Create another text channel and run `/bind provider:codex` there to add it
+   without copying a channel ID.
 
 If slash commands work but normal messages do not, check Message Content Intent,
 channel permissions, and `discord.user_allowlist`.
@@ -360,6 +366,7 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 
 ## Slash commands
 
+- `/bind` — bind the current text channel to a local workspace
 - `/new` — start a session in the current channel
 - `/compact` — summarize the current session into a fresh one
 - `/end` — end the current session
@@ -372,9 +379,42 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 - `/status` — show current channel's session state
 - `/list` — show all workspaces
 - `/reload` — reload workspace mappings from `config.json`
+- `/unbind` — remove the current channel workspace binding
 - `/help`
 
-## Binding a new channel
+## Binding and unbinding channels
+
+The recommended flow is the Discord slash command:
+
+```text
+/bind provider:codex
+```
+
+Run it inside the text channel you want to bind. The bridge derives the
+workspace name from the current channel, previews the target `cwd`, and waits
+for an ephemeral Apply/Cancel confirmation. Applying the bind creates the local
+workspace directory if needed, backs up `config.json`, writes the new workspace
+entry, and reloads config without requiring a bot restart.
+
+Useful `/bind` options:
+
+- `provider` — `codex` or `claude`; defaults to `codex`
+- `dev_root` — parent directory for generated workspace folders; defaults to
+  `~/Dev`
+- `name` — workspace name; defaults to the Discord channel name
+- `cwd` — workspace directory; relative paths are resolved under `dev_root`
+
+To remove a binding, run this from the bound channel:
+
+```text
+/unbind
+```
+
+`/unbind` removes the workspace entry from `config.json`, writes a backup, and
+reloads config. It does not delete files from disk. If a session is running or
+has queued prompts, end or kill the session before unbinding.
+
+### CLI binding fallback
 
 Create the Discord channel manually, copy its channel ID, then dry-run the binding:
 
@@ -393,9 +433,9 @@ npm run bind-workspace -- --channel-id CHANNEL_ID --apply
 Then run `/reload` in Discord to activate the new workspace without restarting
 the bot.
 
-The helper currently accepts a channel ID explicitly. If you wrap this flow in an
-agent skill or slash command, have the wrapper provide the current channel
-context so users do not need to paste raw Discord IDs into shared prompts.
+The CLI helper accepts a channel ID explicitly. Prefer `/bind` for normal use
+because it uses the current Discord channel context and does not require pasting
+raw Discord IDs.
 
 The channel name is only used when binding. After that, routing is based on
 `channel_id`, so renaming the Discord channel does not automatically rename the
@@ -496,7 +536,8 @@ Intent, `discord.user_allowlist`, and channel permissions. The bot needs to see
 the channel, read message history, and send messages.
 
 If a workspace command says the channel is not mapped, copy the channel ID again,
-update `workspaces[].channel_id`, then run `/reload`.
+update `workspaces[].channel_id`, then run `/reload`. For new channels, prefer
+running `/bind` from the channel itself.
 
 If local voice transcription fails, check that `voice.local.binary`,
 `voice.local.ffmpeg_binary`, and `voice.local.model` are absolute paths that

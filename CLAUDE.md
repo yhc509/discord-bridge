@@ -23,8 +23,8 @@ messages in mapped channels spawn the workspace provider (`claude -p` or
   a LAN HTTP transcribe server
 - `scripts/launchd-supervisor.sh` — launchd entry point (one-shot)
 - `scripts/run-bot-loop.sh` — in-tmux restart loop
-- `scripts/bind-workspace` — bind a manually created Discord channel to
-  `~/Dev/<channel-name>`
+- `scripts/bind-workspace` — CLI fallback for binding a manually created
+  Discord channel to `~/Dev/<channel-name>`; normal use should prefer `/bind`
 - `launchd/com.example.discord-bridge.plist` — template for
   `~/Library/LaunchAgents/`
 - `dist/` — tsc build output (runtime loads from here, **not** src)
@@ -98,7 +98,8 @@ launchctl bootstrap gui/$(id -u) \
 | --- | --- |
 | Attach to live bot output | `tmux -L discord-bridge attach -t discord-bridge` (Ctrl-b d to detach) |
 | List tmux sessions | `tmux -L discord-bridge ls` |
-| Bind a new channel | `npm run bind-workspace -- --channel-id CHANNEL_ID` then rerun with `--apply` |
+| Bind a new channel | Run `/bind provider:codex` in the target Discord text channel |
+| Unbind a channel | Run `/unbind` in the bound Discord channel; files stay on disk |
 | Rebuild + restart bot | `npm run build && tmux -L discord-bridge kill-session -t discord-bridge` (supervisor restarts it within ≤60s, or run `bash scripts/launchd-supervisor.sh` for immediate restart) |
 | Force immediate restart | `bash scripts/launchd-supervisor.sh` |
 | Trigger supervisor via launchd | `launchctl kickstart gui/$(id -u)/com.example.discord-bridge` |
@@ -130,10 +131,20 @@ a compatible `/transcribe` endpoint, intended for a MacBook bridge that offloads
 transcription to a Mac mini. `voice.server.enabled` exposes that endpoint from a
 local bridge process; non-loopback hosts require `voice.server.token`.
 
-`npm run bind-workspace -- --channel-id CHANNEL_ID` fetches the real Discord
-channel name and derives `workspace.name` and `cwd` as `~/Dev/<channel-name>`.
-The channel name is only captured at bind time; later Discord renames do not
-auto-update `config.json`.
+`/bind` is the preferred way to add workspace mappings from Discord. It uses the
+current channel ID internally, previews the derived workspace, writes a
+`config.json.bak.*` backup, appends the workspace, creates the `cwd` if needed,
+and reloads config after Apply. It defaults to `provider: "codex"` and `~/Dev`
+as the parent directory.
+
+`/unbind` removes the current channel's workspace mapping, writes a backup, and
+reloads config. It does not delete the workspace directory, and it refuses to
+run while the workspace has an active or queued session.
+
+`npm run bind-workspace -- --channel-id CHANNEL_ID` remains as a CLI fallback.
+It fetches the real Discord channel name and derives `workspace.name` and `cwd`
+as `~/Dev/<channel-name>`. The channel name is only captured at bind time; later
+Discord renames do not auto-update `config.json`.
 
 ## Development notes
 
@@ -149,6 +160,8 @@ auto-update `config.json`.
   prevents the `code 143` error from reaching Discord.
 - Never commit `config.json`, `config.json.bak.*`, or anything containing the
   bot token.
+- Slash command changes require `npm run build` and a bot process restart
+  because guild commands are registered on startup.
 
 ## Known issues / backlog
 
