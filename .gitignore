@@ -4,6 +4,8 @@ config.json
 config.json.bak.*
 .env
 *.log
+__pycache__/
+*.pyc
 state.json
 /state.json
 .discord-attachments/

@@ -227,6 +227,20 @@ In a mapped channel:
 Config changes to workspace mappings can usually be applied with `/reload`.
 Changes to `discord.bot_token` or `discord.guild_id` require a process restart.
 
+## Agent Skills
+
+The repo includes optional agent skills for sending generated files back to
+Discord through the bridge attachment outbox:
+
+- `.codex/skills/discord-bridge-attachments`
+- `.claude/skills/discord-bridge-attachments`
+
+These skills are not required to run the bot. They are helper instructions for
+Codex or Claude sessions running inside discord-bridge. When an agent creates a
+screenshot, image, report, or log bundle, the skill registers the absolute file
+path in `DISCORD_ATTACH_OUTBOX_DIR`; the bridge then uploads the file to Discord
+after the turn finishes.
+
 ## Voice Input
 
 Voice input is optional. When `voice.enabled` is true, audio attachments such as
