@@ -23,17 +23,18 @@ workspace execution policy in `config.json`.
 
 ## Positioning
 
-This is not a hosted Discord AI bot, a terminal-sharing UI, or a cloud sandbox.
-It is a small router for people who already have:
+This is a small router for people who already have:
 
 - local projects checked out on a machine they control
 - existing Discord channels they want to use as persistent project rooms
 - Claude Code and/or Codex CLI authenticated locally
-- a need to send prompts, files, and long-running agent output from Discord
+- a need to send prompts, files, voice messages, and long-running agent output
+  from Discord while away from the keyboard
 
-Compared with bridges that create one thread per session, mirror an interactive
-tmux terminal, or target many chat platforms, `discord-bridge` focuses on a
-narrower workflow: stable Discord channels bound to stable local workspaces.
+The bridge intentionally stays narrow: each Discord channel maps to one local
+workspace with its own `cwd`, provider, session state, queue, attachments, and
+usage status. The bot only operates inside channels you bind in `config.json`,
+so it does not need permission to create or manage your server structure.
 
 ## Why It Helps
 
