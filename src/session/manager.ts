@@ -498,6 +498,15 @@ export class SessionManager {
       throw new Error('workspace is already running');
     }
 
+    const pendingPermission = state.pendingPermission;
+    if (pendingPermission === undefined) {
+      throw new Error('no pending Claude permission request');
+    }
+
+    if (pendingPermission.id !== requestId) {
+      throw new Error(`pending Claude permission request does not match: ${requestId}`);
+    }
+
     state.pendingPermission = undefined;
     yield* this.runTurn(workspace, '', {
       ...opts,
@@ -836,7 +845,9 @@ export class SessionManager {
       state.interruptedTurnStartedAt = undefined;
       this.schedulePersist();
 
-      this.drainPending(workspace);
+      if (state.state !== 'waiting') {
+        this.drainPending(workspace);
+      }
       resolveCurrentTurn();
     }
   }
