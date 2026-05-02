@@ -1,6 +1,19 @@
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+import type { Config } from '../config.js';
 
 import { type ClaudeEvent, parseStream } from './parser.js';
+
+export type ClaudePermissionDecision = 'defer' | 'allow' | 'deny';
+
+export interface ClaudePermissionApproval {
+  enabled: boolean;
+  tools: string[];
+  decision: ClaudePermissionDecision;
+  requestId?: string;
+  denyReason?: string;
+}
 
 export interface InvokeArgs {
   cwd: string;
@@ -11,10 +24,11 @@ export interface InvokeArgs {
   extraEnv?: NodeJS.ProcessEnv;
   continueSession: boolean;
   resumeSessionId?: string;
-  permissionMode: 'bypassPermissions';
+  permissionMode: Config['claude']['permission_mode'];
   outputFormat: 'stream-json';
   model: string;
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  permissionApproval?: ClaudePermissionApproval;
 }
 
 export interface InvokeHandle {
@@ -70,6 +84,42 @@ class EventQueue {
 }
 
 const MAX_STDERR_BUFFER_BYTES = 64 * 1024;
+const CLAUDE_PERMISSION_HOOK_PATH = fileURLToPath(
+  new URL('../../scripts/claude-permission-hook.cjs', import.meta.url),
+);
+const CLAUDE_PERMISSION_DECISION_ENV = 'DISCORD_BRIDGE_CLAUDE_PERMISSION_DECISION';
+const CLAUDE_PERMISSION_REQUEST_ID_ENV = 'DISCORD_BRIDGE_CLAUDE_PERMISSION_REQUEST_ID';
+const CLAUDE_PERMISSION_DENY_REASON_ENV = 'DISCORD_BRIDGE_CLAUDE_PERMISSION_DENY_REASON';
+
+function claudePermissionHookSettings(tools: string[]): string {
+  const command = `node ${JSON.stringify(CLAUDE_PERMISSION_HOOK_PATH)}`;
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: tools.map((tool) => ({
+        matcher: tool,
+        hooks: [{ type: 'command', command }],
+      })),
+    },
+  });
+}
+
+function claudePermissionHookEnv(
+  approval: ClaudePermissionApproval | undefined,
+): NodeJS.ProcessEnv | undefined {
+  if (approval === undefined || !approval.enabled) {
+    return undefined;
+  }
+
+  return {
+    [CLAUDE_PERMISSION_DECISION_ENV]: approval.decision,
+    ...(approval.requestId !== undefined
+      ? { [CLAUDE_PERMISSION_REQUEST_ID_ENV]: approval.requestId }
+      : {}),
+    ...(approval.denyReason !== undefined
+      ? { [CLAUDE_PERMISSION_DENY_REASON_ENV]: approval.denyReason }
+      : {}),
+  };
+}
 
 export function spawnAndStream(
   binary: string,
@@ -219,6 +269,10 @@ export function invoke(args: InvokeArgs): InvokeHandle {
     argv.push('--append-system-prompt', args.appendSystemPrompt);
   }
 
+  if (args.permissionApproval?.enabled === true) {
+    argv.push('--settings', claudePermissionHookSettings(args.permissionApproval.tools));
+  }
+
   return spawnAndStream(
     args.binary,
     argv,
@@ -227,6 +281,9 @@ export function invoke(args: InvokeArgs): InvokeHandle {
     parseStream,
     'claude',
     args.timeoutMs,
-    args.extraEnv,
+    {
+      ...args.extraEnv,
+      ...claudePermissionHookEnv(args.permissionApproval),
+    },
   );
 }

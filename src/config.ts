@@ -6,6 +6,14 @@ export const providerValues = ['claude', 'codex'] as const;
 export type Provider = (typeof providerValues)[number];
 export const voiceProviderValues = ['local', 'http'] as const;
 export type VoiceProvider = (typeof voiceProviderValues)[number];
+export const claudePermissionModeValues = [
+  'default',
+  'acceptEdits',
+  'auto',
+  'dontAsk',
+  'plan',
+  'bypassPermissions',
+] as const;
 
 const workspaceSchema = z.object({
   name: z.string().min(1),
@@ -47,6 +55,15 @@ const voiceSchema = z
   })
   .default({});
 
+const claudeApprovalSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    tools: z
+      .array(z.string().min(1))
+      .default(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']),
+  })
+  .default({});
+
 const configSchema = z.object({
   state_file: z.string().optional(),
   workspaces: z.array(workspaceSchema).min(1),
@@ -58,11 +75,12 @@ const configSchema = z.object({
   }),
   claude: z.object({
     binary: z.string().min(1),
-    permission_mode: z.literal('bypassPermissions'),
+    permission_mode: z.enum(claudePermissionModeValues).default('bypassPermissions'),
     output_format: z.literal('stream-json'),
     model: z.string().min(1).default('claude-opus-4-6[1m]'),
     effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('high'),
     timeout: z.number().default(600000),
+    approval: claudeApprovalSchema,
   }),
   codex: z
     .object({
