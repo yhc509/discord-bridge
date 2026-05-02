@@ -35,6 +35,22 @@ Compared with bridges that create one thread per session, mirror an interactive
 tmux terminal, or target many chat platforms, `discord-bridge` focuses on a
 narrower workflow: stable Discord channels bound to stable local workspaces.
 
+## Why It Helps
+
+- **Channel-bound workspaces**: each Discord channel can be a persistent project
+  room with its own local `cwd`, provider, session state, queue, attachments,
+  and usage status.
+- **Project switching without context mixing**: moving between Discord channels
+  moves between local projects, so prompts for one repo do not land in another
+  repo's shell or session.
+- **Remote workspace expansion**: after the bridge is running, an authorized
+  operator can ask an existing mapped workspace to run the binding helper, add a
+  new channel-to-folder mapping, and apply it with `/reload` without SSH access
+  to the host.
+- **Local-only routing details**: Discord channel IDs and workspace paths live in
+  `config.json`, which is gitignored. The public repo can show the workflow
+  without publishing a real server's routing table.
+
 ## Example
 
 ![discord-bridge running in a Discord project channel](docs/images/discord-bridge-example.png)
@@ -375,6 +391,10 @@ npm run bind-workspace -- --channel-id CHANNEL_ID --apply
 
 Then run `/reload` in Discord to activate the new workspace without restarting
 the bot.
+
+The helper currently accepts a channel ID explicitly. If you wrap this flow in an
+agent skill or slash command, have the wrapper provide the current channel
+context so users do not need to paste raw Discord IDs into shared prompts.
 
 The channel name is only used when binding. After that, routing is based on
 `channel_id`, so renaming the Discord channel does not automatically rename the
