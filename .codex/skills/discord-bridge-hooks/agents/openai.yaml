@@ -1,0 +1,4 @@
+interface:
+  display_name: "Discord Bridge Hooks"
+  short_description: "Schedule one-time Discord reminders through discord-bridge."
+  default_prompt: "Remind me later in this Discord channel."

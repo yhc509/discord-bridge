@@ -101,6 +101,7 @@ launchctl bootstrap gui/$(id -u) \
 | Audit channel/workspace safety | Run `/audit` in the Discord text channel |
 | Bind a new channel | Run `/bind provider:codex` in the target Discord text channel |
 | Unbind a channel | Run `/unbind` in the bound Discord channel; files stay on disk |
+| Add a scheduled hook | Run `/hooks add` in a bound Discord channel with `id`, `at`, and `message` |
 | List scheduled hooks | Run `/hooks list` in a bound Discord channel |
 | Rebuild + restart bot | `npm run build && tmux -L discord-bridge kill-session -t discord-bridge` (supervisor restarts it within ≤60s, or run `bash scripts/launchd-supervisor.sh` for immediate restart) |
 | Force immediate restart | `bash scripts/launchd-supervisor.sh` |
@@ -142,8 +143,10 @@ checks channel visibility, broad bot permissions, workspace path scope,
 Scheduled hooks are one-time reminder messages. Bridge-launched agents receive
 `DISCORD_BRIDGE_HOOK_CLI` plus hook store env vars, and can register reminders
 with `scripts/discord-hook add --id ID --at ISO_TIME --message TEXT`. The bot
-scheduler delivers due hooks to the workspace's bound channel. `/hooks list`
-and `/hooks cancel` manage them manually.
+scheduler delivers due hooks to the workspace's bound channel. `/hooks add`,
+`/hooks list`, and `/hooks cancel` manage them manually. The same workflow is
+also documented in repo-local `discord-bridge-hooks` skills for Codex and
+Claude.
 
 `/bind` is the preferred way to add workspace mappings from Discord. It uses the
 current channel ID internally, previews the derived workspace, writes a

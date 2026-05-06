@@ -390,6 +390,7 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 - `/usage` — show provider usage for the current workspace
 - `/status` — show current channel's session state
 - `/list` — show all workspaces
+- `/hooks add` — add a scheduled hook for the current workspace
 - `/hooks list` — show scheduled hooks for the current workspace
 - `/hooks cancel` — cancel a scheduled hook
 - `/reload` — reload workspace mappings from `config.json`
@@ -420,9 +421,14 @@ The CLI is exposed to bridge-launched agents through environment variables:
 "$DISCORD_BRIDGE_HOOK_CLI" cancel --id deploy-check
 ```
 
+The repository also includes `discord-bridge-hooks` skills for Codex and Claude
+so agents know to use this CLI when a user asks for a reminder in natural
+language.
+
 Use Discord slash commands for manual management:
 
 ```text
+/hooks add id:deploy-check at:2026-05-07T09:00:00+09:00 message:배포 상태 확인
 /hooks list
 /hooks cancel id:deploy-check
 ```
