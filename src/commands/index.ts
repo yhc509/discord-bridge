@@ -3,6 +3,7 @@ import { bindCommand, buttonHandlers as bindButtonHandlers } from './bind.js';
 import { compactCommand } from './compact.js';
 import { endCommand } from './end.js';
 import { helpCommand } from './help.js';
+import { hooksCommand } from './hooks.js';
 import { killCommand, buttonHandlers as killButtonHandlers } from './kill.js';
 import { interruptCommand } from './interrupt.js';
 import { listCommand } from './list.js';
@@ -26,6 +27,7 @@ export const slashCommands: SlashCommand[] = [
   usageCommand,
   statusCommand,
   listCommand,
+  hooksCommand,
   reloadCommand,
   unbindCommand,
   helpCommand,

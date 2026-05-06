@@ -62,5 +62,13 @@
     "workspace_roots": ["/Users/YOUR_USERNAME/Dev"],
     "warn_public_bind": true,
     "warn_broad_cwd": true
+  },
+  "hooks": {
+    "enabled": true,
+    "file": "/Users/YOUR_USERNAME/Library/Application Support/discord-bridge/hooks.json",
+    "poll_interval_ms": 5000,
+    "max_hooks_per_workspace": 25,
+    "max_schedule_days": 90,
+    "missed_grace_ms": 86400000
   }
 }
