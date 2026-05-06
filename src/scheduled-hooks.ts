@@ -3,7 +3,7 @@ import {
   EmbedBuilder,
   type SendableChannels,
 } from 'discord.js';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Config } from './config.js';
@@ -51,6 +51,9 @@ export interface ListHooksOptions {
 const STORE_VERSION = 1;
 const HOOK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_MESSAGE_LENGTH = 1800;
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_STALE_MS = 10 * 60 * 1000;
+const LOCK_RETRY_MS = 50;
 
 function emptyStore(): ScheduledHookStore {
   return { version: STORE_VERSION, hooks: [] };
@@ -185,14 +188,74 @@ function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
 
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function acquireHookStoreLock(filePath: string): Promise<() => Promise<void>> {
+  const lockPath = `${filePath}.lock`;
+  const startedAt = Date.now();
+
+  await mkdir(path.dirname(filePath), { recursive: true });
+
+  while (true) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      return async () => {
+        await rm(lockPath, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'EEXIST')) {
+        throw error;
+      }
+    }
+
+    try {
+      const lockStat = await stat(lockPath);
+      if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+        await rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'ENOENT')) {
+        throw error;
+      }
+      continue;
+    }
+
+    if (Date.now() - startedAt > LOCK_TIMEOUT_MS) {
+      throw new Error(`timed out waiting for hooks lock: ${lockPath}`);
+    }
+
+    await delay(LOCK_RETRY_MS);
+  }
+}
+
+async function withHookStoreLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  const release = await acquireHookStoreLock(filePath);
+  try {
+    return await fn();
+  } finally {
+    await release();
+  }
+}
+
 async function mutateHookStore<T>(
   filePath: string,
   mutate: (store: ScheduledHookStore) => T,
 ): Promise<T> {
-  const store = await loadHookStore(filePath);
-  const result = mutate(store);
-  await saveHookStore(filePath, store);
-  return result;
+  return withHookStoreLock(filePath, async () => {
+    const store = await loadHookStore(filePath);
+    const result = mutate(store);
+    await saveHookStore(filePath, store);
+    return result;
+  });
 }
 
 export async function listHooks(
@@ -312,11 +375,19 @@ export class ScheduledHookScheduler {
   constructor(private options: ScheduledHookSchedulerOptions) {}
 
   update(options: Omit<ScheduledHookSchedulerOptions, 'client'>): void {
+    const wasStarted = this.timer !== undefined;
     this.options = { ...options, client: this.options.client };
-    if (this.timer !== undefined) {
+
+    if (!this.options.cfg.hooks.enabled) {
       this.stop();
-      this.start();
+      return;
     }
+
+    if (wasStarted) {
+      this.stop();
+    }
+
+    this.start();
   }
 
   start(): void {
@@ -355,49 +426,51 @@ export class ScheduledHookScheduler {
   }
 
   private async deliverDueHooks(now: Date): Promise<void> {
-    const nowMs = now.getTime();
-    const store = await loadHookStore(this.options.hooksFilePath);
-    let changed = false;
+    await withHookStoreLock(this.options.hooksFilePath, async () => {
+      const nowMs = now.getTime();
+      const store = await loadHookStore(this.options.hooksFilePath);
+      let changed = false;
 
-    for (const hook of store.hooks.filter((candidate) => hookDue(candidate, nowMs))) {
-      const runAtMs = Date.parse(hook.run_at);
-      if (nowMs - runAtMs > this.options.cfg.hooks.missed_grace_ms) {
-        hook.status = 'missed';
-        hook.missed_at = now.toISOString();
-        changed = true;
-        continue;
-      }
-
-      const workspace = this.options.cfg.workspaces.find(
-        (candidate) => candidate.name === hook.workspace,
-      );
-      if (workspace === undefined) {
-        hook.status = 'failed';
-        hook.failed_at = now.toISOString();
-        hook.failure = `workspace not found: ${hook.workspace}`;
-        changed = true;
-        continue;
-      }
-
-      try {
-        const channel = await this.options.client.channels.fetch(workspace.channel_id);
-        if (channel === null || !channel.isSendable()) {
-          throw new Error('target channel is not sendable');
+      for (const hook of store.hooks.filter((candidate) => hookDue(candidate, nowMs))) {
+        const runAtMs = Date.parse(hook.run_at);
+        if (nowMs - runAtMs > this.options.cfg.hooks.missed_grace_ms) {
+          hook.status = 'missed';
+          hook.missed_at = now.toISOString();
+          changed = true;
+          continue;
         }
 
-        await sendHookMessage(channel, hook);
-        hook.status = 'delivered';
-        hook.delivered_at = new Date().toISOString();
-      } catch (error) {
-        hook.status = 'failed';
-        hook.failed_at = new Date().toISOString();
-        hook.failure = error instanceof Error ? error.message : String(error);
-      }
-      changed = true;
-    }
+        const workspace = this.options.cfg.workspaces.find(
+          (candidate) => candidate.name === hook.workspace,
+        );
+        if (workspace === undefined) {
+          hook.status = 'failed';
+          hook.failed_at = now.toISOString();
+          hook.failure = `workspace not found: ${hook.workspace}`;
+          changed = true;
+          continue;
+        }
 
-    if (changed) {
-      await saveHookStore(this.options.hooksFilePath, store);
-    }
+        try {
+          const channel = await this.options.client.channels.fetch(workspace.channel_id);
+          if (channel === null || !channel.isSendable()) {
+            throw new Error('target channel is not sendable');
+          }
+
+          await sendHookMessage(channel, hook);
+          hook.status = 'delivered';
+          hook.delivered_at = new Date().toISOString();
+        } catch (error) {
+          hook.status = 'failed';
+          hook.failed_at = new Date().toISOString();
+          hook.failure = error instanceof Error ? error.message : String(error);
+        }
+        changed = true;
+      }
+
+      if (changed) {
+        await saveHookStore(this.options.hooksFilePath, store);
+      }
+    });
   }
 }
