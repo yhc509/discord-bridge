@@ -768,6 +768,9 @@ async function handleSessionEvents(
       }
 
       if (event.type === 'session_init') {
+        if (provider === 'codex') {
+          await getHandle();
+        }
         continue;
       }
 
