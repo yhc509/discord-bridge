@@ -1,0 +1,240 @@
+#!/usr/bin/env node
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const HOOKS_FILE_ENV = 'DISCORD_BRIDGE_HOOKS_FILE';
+const WORKSPACE_ENV = 'DISCORD_BRIDGE_HOOK_WORKSPACE';
+const MAX_DAYS_ENV = 'DISCORD_BRIDGE_HOOK_MAX_SCHEDULE_DAYS';
+const MAX_PER_WORKSPACE_ENV = 'DISCORD_BRIDGE_HOOK_MAX_PER_WORKSPACE';
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const MAX_MESSAGE_LENGTH = 1800;
+
+function fail(message) {
+  console.error(`discord-hook: ${message}`);
+  process.exit(1);
+}
+
+function usage() {
+  console.log(`Usage:
+  discord-hook add --id <id> --at <iso-time> --message <text>
+  discord-hook list [--json] [--all]
+  discord-hook cancel --id <id>
+
+Environment:
+  ${HOOKS_FILE_ENV}       hooks store path
+  ${WORKSPACE_ENV}       current discord-bridge workspace
+`);
+}
+
+function parseArgs(argv) {
+  const [command, ...rest] = argv;
+  const args = { _: [] };
+
+  for (let i = 0; i < rest.length; i += 1) {
+    const part = rest[i];
+    if (!part.startsWith('--')) {
+      args._.push(part);
+      continue;
+    }
+
+    const name = part.slice(2);
+    if (name === 'json' || name === 'all' || name === 'help') {
+      args[name] = true;
+      continue;
+    }
+
+    const value = rest[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      fail(`missing value for --${name}`);
+    }
+    args[name] = value;
+    i += 1;
+  }
+
+  return { command, args };
+}
+
+function hookFile() {
+  const value = process.env[HOOKS_FILE_ENV];
+  if (!value) {
+    fail(`${HOOKS_FILE_ENV} is not set`);
+  }
+  return value;
+}
+
+function workspaceName() {
+  const value = process.env[WORKSPACE_ENV];
+  if (!value) {
+    fail(`${WORKSPACE_ENV} is not set`);
+  }
+  return value;
+}
+
+function maxScheduleDays() {
+  return Number.parseInt(process.env[MAX_DAYS_ENV] ?? '90', 10);
+}
+
+function maxHooksPerWorkspace() {
+  return Number.parseInt(process.env[MAX_PER_WORKSPACE_ENV] ?? '25', 10);
+}
+
+function validateId(id) {
+  if (!ID_PATTERN.test(id)) {
+    fail('hook id must be 1-64 chars: letters, numbers, dot, underscore, dash');
+  }
+}
+
+function validateMessage(message) {
+  if (!message || message.trim().length === 0) {
+    fail('hook message is required');
+  }
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    fail(`hook message is too long; max ${MAX_MESSAGE_LENGTH} chars`);
+  }
+}
+
+function validateRunAt(runAt) {
+  const runAtMs = Date.parse(runAt);
+  if (!Number.isFinite(runAtMs)) {
+    fail('--at must be a valid ISO 8601 timestamp');
+  }
+
+  const now = Date.now();
+  if (runAtMs <= now) {
+    fail('--at must be in the future');
+  }
+
+  const maxMs = now + maxScheduleDays() * 24 * 60 * 60 * 1000;
+  if (runAtMs > maxMs) {
+    fail(`--at is too far in the future; max ${maxScheduleDays()} day(s)`);
+  }
+}
+
+async function loadStore(filePath) {
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8'));
+    return {
+      version: 1,
+      hooks: Array.isArray(parsed.hooks) ? parsed.hooks : [],
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { version: 1, hooks: [] };
+    }
+    throw error;
+  }
+}
+
+async function saveStore(filePath, store) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  await rename(tempPath, filePath);
+}
+
+function activeHooks(store, workspace) {
+  return store.hooks.filter(
+    (hook) => hook.workspace === workspace && hook.status === 'scheduled',
+  );
+}
+
+async function addHook(args) {
+  const id = args.id;
+  const runAt = args.at;
+  const message = args.message;
+  const workspace = workspaceName();
+
+  validateId(id ?? '');
+  validateRunAt(runAt ?? '');
+  validateMessage(message ?? '');
+
+  const filePath = hookFile();
+  const store = await loadStore(filePath);
+
+  if (activeHooks(store, workspace).some((hook) => hook.id === id)) {
+    fail(`scheduled hook already exists: ${id}`);
+  }
+
+  if (activeHooks(store, workspace).length >= maxHooksPerWorkspace()) {
+    fail(`workspace has too many scheduled hooks; max ${maxHooksPerWorkspace()}`);
+  }
+
+  const hook = {
+    id,
+    workspace,
+    run_at: new Date(Date.parse(runAt)).toISOString(),
+    message,
+    status: 'scheduled',
+    created_at: new Date().toISOString(),
+    created_by: 'agent-cli',
+  };
+
+  store.hooks.push(hook);
+  await saveStore(filePath, store);
+  console.log(JSON.stringify(hook, null, 2));
+}
+
+async function listHooks(args) {
+  const workspace = workspaceName();
+  const store = await loadStore(hookFile());
+  const hooks = store.hooks
+    .filter((hook) => hook.workspace === workspace)
+    .filter((hook) => args.all === true || hook.status === 'scheduled')
+    .sort((a, b) => Date.parse(a.run_at) - Date.parse(b.run_at));
+
+  if (args.json === true) {
+    console.log(JSON.stringify(hooks, null, 2));
+    return;
+  }
+
+  if (hooks.length === 0) {
+    console.log('No hooks.');
+    return;
+  }
+
+  for (const hook of hooks) {
+    console.log(`${hook.id}\t${hook.status}\t${hook.run_at}\t${hook.message}`);
+  }
+}
+
+async function cancelHook(args) {
+  const id = args.id;
+  const workspace = workspaceName();
+
+  validateId(id ?? '');
+
+  const filePath = hookFile();
+  const store = await loadStore(filePath);
+  const hook = activeHooks(store, workspace).find((candidate) => candidate.id === id);
+
+  if (!hook) {
+    fail(`scheduled hook not found: ${id}`);
+  }
+
+  hook.status = 'canceled';
+  hook.canceled_at = new Date().toISOString();
+  await saveStore(filePath, store);
+  console.log(JSON.stringify(hook, null, 2));
+}
+
+const { command, args } = parseArgs(process.argv.slice(2));
+
+if (!command || command === 'help' || args.help === true) {
+  usage();
+  process.exit(0);
+}
+
+try {
+  if (command === 'add') {
+    await addHook(args);
+  } else if (command === 'list') {
+    await listHooks(args);
+  } else if (command === 'cancel') {
+    await cancelHook(args);
+  } else {
+    fail(`unknown command: ${command}`);
+  }
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}

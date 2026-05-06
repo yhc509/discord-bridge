@@ -390,9 +390,55 @@ operator channel. The single-instance lockfile lives next to `state.json`.
 - `/usage` — show provider usage for the current workspace
 - `/status` — show current channel's session state
 - `/list` — show all workspaces
+- `/hooks list` — show scheduled hooks for the current workspace
+- `/hooks cancel` — cancel a scheduled hook
 - `/reload` — reload workspace mappings from `config.json`
 - `/unbind` — remove the current channel workspace binding
 - `/help`
+
+## Scheduled hooks
+
+Scheduled hooks are one-time reminder messages managed by the bridge. They are
+intended for prompts such as "tomorrow at 9, remind me to check the deploy".
+The agent registers the hook through the local `scripts/discord-hook` CLI, the
+bridge stores it in `hooks.json`, and the bot posts the reminder in the bound
+workspace channel when it becomes due.
+
+Hooks send static messages only. They do not automatically run Claude or Codex
+again, which keeps the first version predictable and avoids unattended agent
+execution.
+
+The CLI is exposed to bridge-launched agents through environment variables:
+
+```bash
+"$DISCORD_BRIDGE_HOOK_CLI" add \
+  --id deploy-check \
+  --at 2026-05-07T09:00:00+09:00 \
+  --message "배포 상태 확인"
+
+"$DISCORD_BRIDGE_HOOK_CLI" list
+"$DISCORD_BRIDGE_HOOK_CLI" cancel --id deploy-check
+```
+
+Use Discord slash commands for manual management:
+
+```text
+/hooks list
+/hooks cancel id:deploy-check
+```
+
+Config:
+
+```json
+"hooks": {
+  "enabled": true,
+  "file": "/Users/YOUR_USERNAME/Library/Application Support/discord-bridge/hooks.json",
+  "poll_interval_ms": 5000,
+  "max_hooks_per_workspace": 25,
+  "max_schedule_days": 90,
+  "missed_grace_ms": 86400000
+}
+```
 
 ## Security audit
 

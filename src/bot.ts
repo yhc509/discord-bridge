@@ -36,6 +36,14 @@ import {
   readAttachmentOutbox,
 } from './outbound-attachments.js';
 import { getProviderUsageSnapshot } from './provider-usage.js';
+import {
+  DISCORD_BRIDGE_HOOK_CLI_ENV,
+  DISCORD_BRIDGE_HOOK_MAX_DAYS_ENV,
+  DISCORD_BRIDGE_HOOK_MAX_PER_WORKSPACE_ENV,
+  DISCORD_BRIDGE_HOOKS_FILE_ENV,
+  hookAgentInstructions,
+  ScheduledHookScheduler,
+} from './scheduled-hooks.js';
 import { SessionManager, type WorkspaceStatus } from './session/manager.js';
 import type { ClaudeEvent } from './session/parser.js';
 import {
@@ -87,6 +95,35 @@ type VoiceRuntime = {
   transcriber: VoiceTranscriber | undefined;
   server: VoiceTranscriptionServer | undefined;
 };
+
+function defaultStatePath(): string {
+  return path.join(os.homedir(), 'Library/Application Support/discord-bridge/state.json');
+}
+
+function resolveHooksFilePath(cfg: Config, statePath: string): string {
+  return cfg.hooks.file ?? path.join(path.dirname(statePath), 'hooks.json');
+}
+
+function hookCliPath(): string {
+  return path.resolve('scripts/discord-hook');
+}
+
+function hookAgentEnv(cfg: Config, hooksFilePath: string): NodeJS.ProcessEnv {
+  if (!cfg.hooks.enabled) {
+    return {};
+  }
+
+  return {
+    [DISCORD_BRIDGE_HOOKS_FILE_ENV]: hooksFilePath,
+    [DISCORD_BRIDGE_HOOK_CLI_ENV]: hookCliPath(),
+    [DISCORD_BRIDGE_HOOK_MAX_DAYS_ENV]: String(cfg.hooks.max_schedule_days),
+    [DISCORD_BRIDGE_HOOK_MAX_PER_WORKSPACE_ENV]: String(cfg.hooks.max_hooks_per_workspace),
+  };
+}
+
+function hookHiddenInstructions(cfg: Config): string | undefined {
+  return cfg.hooks.enabled ? hookAgentInstructions() : undefined;
+}
 
 async function replyEphemeral(interaction: Interaction, content: string): Promise<void> {
   if (!interaction.isRepliable()) {
@@ -890,9 +927,8 @@ async function handlePermissionActionInteraction(
 async function main(): Promise<void> {
   const configPath = DEFAULT_BIND_CONFIG_PATH;
   let currentConfig = await loadConfig(configPath);
-  const statePath =
-    currentConfig.state_file ??
-    path.join(os.homedir(), 'Library/Application Support/discord-bridge/state.json');
+  const statePath = currentConfig.state_file ?? defaultStatePath();
+  let hooksFilePath = resolveHooksFilePath(currentConfig, statePath);
   const lockPath = path.join(path.dirname(statePath), 'bot.pid');
   let releaseLock: () => Promise<void>;
 
@@ -903,10 +939,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const sessions = new SessionManager(currentConfig, statePath);
+  const sessions = new SessionManager(
+    currentConfig,
+    statePath,
+    hookAgentEnv(currentConfig, hooksFilePath),
+    hookHiddenInstructions(currentConfig),
+  );
   await sessions.loadPersisted(statePath);
   const streamer = createDiscordStreamer();
   let voiceRuntime = await createVoiceRuntime(currentConfig);
+  let hookScheduler: ScheduledHookScheduler | undefined;
   sessions.setQueueRunner(async (ctx, run) => {
     if (ctx === undefined) {
       console.error('queueRunner invoked without queue context');
@@ -947,6 +989,12 @@ async function main(): Promise<void> {
     }
 
     currentConfig = runtimeConfig;
+    hooksFilePath = resolveHooksFilePath(runtimeConfig, statePath);
+    sessions.setBridgeRuntime(
+      hookAgentEnv(runtimeConfig, hooksFilePath),
+      hookHiddenInstructions(runtimeConfig),
+    );
+    hookScheduler?.update({ cfg: runtimeConfig, hooksFilePath });
     return sessions.updateConfig(runtimeConfig);
   };
 
@@ -955,6 +1003,9 @@ async function main(): Promise<void> {
       return currentConfig;
     },
     configPath,
+    get hooksFilePath() {
+      return hooksFilePath;
+    },
     sessions,
     streamer,
     reloadConfig,
@@ -970,6 +1021,13 @@ async function main(): Promise<void> {
   });
 
   client.once(Events.ClientReady, async (readyClient) => {
+    hookScheduler = new ScheduledHookScheduler({
+      client: readyClient,
+      cfg: currentConfig,
+      hooksFilePath,
+    });
+    hookScheduler.start();
+
     try {
       await readyClient.application.fetch();
       const applicationId = readyClient.application.id;
@@ -1185,6 +1243,7 @@ async function main(): Promise<void> {
 
     void (async () => {
       client.destroy();
+      hookScheduler?.stop();
       await closeVoiceRuntime(voiceRuntime);
       await releaseLock();
       process.exit(0);

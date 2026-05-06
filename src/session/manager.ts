@@ -1,5 +1,6 @@
 import type { Config, Provider, Workspace } from '../config.js';
 import { DISCORD_ATTACH_OUTBOX_ENV } from '../outbound-attachments.js';
+import { DISCORD_BRIDGE_HOOK_WORKSPACE_ENV } from '../scheduled-hooks.js';
 import type { SendableChannel } from '../stream.js';
 import {
   invoke,
@@ -258,7 +259,17 @@ export class SessionManager {
   constructor(
     private cfg: Config,
     private stateFilePath: string,
+    private bridgeEnv: NodeJS.ProcessEnv = {},
+    private bridgeHiddenInstructions?: string,
   ) {}
+
+  setBridgeRuntime(
+    bridgeEnv: NodeJS.ProcessEnv = {},
+    bridgeHiddenInstructions?: string,
+  ): void {
+    this.bridgeEnv = bridgeEnv;
+    this.bridgeHiddenInstructions = bridgeHiddenInstructions;
+  }
 
   async loadPersisted(filePath: string): Promise<void> {
     this.stateFilePath = filePath;
@@ -728,7 +739,10 @@ export class SessionManager {
     let handle: InvokeHandle | undefined;
 
     try {
-      const hiddenInstructions = composeHiddenInstructions(opts);
+      const hiddenInstructions = [
+        this.bridgeHiddenInstructions,
+        composeHiddenInstructions(opts),
+      ].filter((part) => part !== undefined && part.length > 0).join('\n\n') || undefined;
       if (state.provider === 'codex') {
         const developerInstructions = hiddenInstructions
           ? `${CODEX_DISCORD_DEVELOPER_INSTRUCTIONS}\n\n${hiddenInstructions}`
@@ -739,10 +753,7 @@ export class SessionManager {
           prompt,
           developerInstructions,
           timeoutMs: this.cfg.codex.timeout,
-          extraEnv:
-            opts.attachmentOutboxDir !== undefined
-              ? { [DISCORD_ATTACH_OUTBOX_ENV]: opts.attachmentOutboxDir }
-              : undefined,
+          extraEnv: this.extraEnvForTurn(workspace, opts),
           resumeThreadId: !isFirstTurn ? state.sessionId : undefined,
           model: this.cfg.codex.model,
           sandboxMode: this.cfg.codex.sandbox_mode,
@@ -755,10 +766,7 @@ export class SessionManager {
           prompt,
           appendSystemPrompt: hiddenInstructions,
           timeoutMs: this.cfg.claude.timeout,
-          extraEnv:
-            opts.attachmentOutboxDir !== undefined
-              ? { [DISCORD_ATTACH_OUTBOX_ENV]: opts.attachmentOutboxDir }
-              : undefined,
+          extraEnv: this.extraEnvForTurn(workspace, opts),
           continueSession: !isFirstTurn,
           resumeSessionId: !isFirstTurn ? state.sessionId : undefined,
           permissionMode: this.cfg.claude.permission_mode,
@@ -1013,5 +1021,15 @@ export class SessionManager {
     }
 
     await savePersistedState(this.stateFilePath, persisted);
+  }
+
+  private extraEnvForTurn(workspace: string, opts: SendPromptOptions): NodeJS.ProcessEnv {
+    return {
+      ...this.bridgeEnv,
+      [DISCORD_BRIDGE_HOOK_WORKSPACE_ENV]: workspace,
+      ...(opts.attachmentOutboxDir !== undefined
+        ? { [DISCORD_ATTACH_OUTBOX_ENV]: opts.attachmentOutboxDir }
+        : {}),
+    };
   }
 }

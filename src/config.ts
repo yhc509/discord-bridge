@@ -72,6 +72,17 @@ const securitySchema = z
   })
   .default({});
 
+const hooksSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    file: z.string().min(1).optional(),
+    poll_interval_ms: z.number().int().min(1000).default(5000),
+    max_hooks_per_workspace: z.number().int().min(1).max(200).default(25),
+    max_schedule_days: z.number().int().min(1).max(3650).default(90),
+    missed_grace_ms: z.number().int().min(0).default(24 * 60 * 60 * 1000),
+  })
+  .default({});
+
 const configSchema = z.object({
   state_file: z.string().optional(),
   workspaces: z.array(workspaceSchema).min(1),
@@ -101,6 +112,7 @@ const configSchema = z.object({
     .default({}),
   voice: voiceSchema,
   security: securitySchema,
+  hooks: hooksSchema,
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -137,6 +149,10 @@ export async function loadConfig(configPath = './config.json'): Promise<Config> 
 
   if (cfg.state_file !== undefined && !path.isAbsolute(cfg.state_file)) {
     throw new Error(`state_file must be absolute: ${cfg.state_file}`);
+  }
+
+  if (cfg.hooks.file !== undefined && !path.isAbsolute(cfg.hooks.file)) {
+    throw new Error(`hooks.file must be absolute: ${cfg.hooks.file}`);
   }
 
   const workspaceNames = new Set<string>();

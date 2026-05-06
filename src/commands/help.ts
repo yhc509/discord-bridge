@@ -11,6 +11,8 @@ const commandDescriptions = [
   ['usage', 'Show 5h / 7d usage for this workspace provider'],
   ['status', 'Show current channel workspace status'],
   ['list', 'Show all workspace statuses'],
+  ['hooks list', 'List scheduled hooks for this workspace'],
+  ['hooks cancel', 'Cancel a scheduled hook'],
   ['reload', 'Reload config.json workspaces'],
   ['unbind', 'Remove this channel workspace binding'],
   ['help', 'Show available commands'],
